@@ -98,23 +98,48 @@ done
 AP_password=""
 while [ -z "$AP_password" ]
 do
-    read -s -p "Enter Access Point password: " AP_password
+    read -s -p "Enter Access Point password (minimum 8 characters): " AP_password
+    echo
 
     if [ -z "$AP_password" ]; then
         error "Password cannot be empty"
+    elif [ ${#AP_password} -lt 8 ]; then
+        error "Password must be at least 8 characters long"
+        AP_password=""
     fi
 done
 echo
 
-read -p "Access point start on boot (Y/N): " AP_reboot
+read -p "Enable router functionality after reboot? (Y/N): " AP_reboot
 echo
 
-
-if [[ AP_reboot == "Y" ]]; then
-    log "Access point start automatically on reboot"
+if [[ ${AP_reboot^^} == "Y" ]]; then
+    log "Configuring persistent router functionality after reboot..."
     systemctl enable hostapd
     systemctl enable dnsmasq
     systemctl enable netfilter-persistent
+    
+    log "Prevent NetworkManager from managing the interface"
+    mkdir -p /etc/NetworkManager/conf.d/
+    cat > /etc/NetworkManager/conf.d/unmanaged-${AP_IFACE}.conf <<EOF
+[keyfile]
+unmanaged-devices=interface-name:${AP_IFACE}
+EOF
+    systemctl reload NetworkManager || true
+    
+    log "Creating persistent network configuration..."
+    mkdir -p /etc/network/interfaces.d/
+    cat > /etc/network/interfaces.d/${AP_IFACE}.conf <<EOF
+auto ${AP_IFACE}
+iface ${AP_IFACE} inet static
+    address ${LAN_GW}
+    netmask 255.255.255.0
+EOF
+else
+    log "Router will NOT persist after reboot. Run this script again after restart if needed."
+    systemctl disable hostapd
+    systemctl disable dnsmasq
+    systemctl disable netfilter-persistent
 fi
 
 log "Configuring network interface..."
@@ -128,7 +153,12 @@ log "Enabling IP forwarding..."
 cat > /etc/sysctl.conf <<EOF
 net.ipv4.ip_forward=1
 EOF
+mkdir -p /etc/sysctl.d/
+cat > /etc/sysctl.d/99-router-ipforward.conf <<EOF
+net.ipv4.ip_forward=1
+EOF
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
+sysctl --system >/dev/null
 
 log "Configuring hostapd..."
 rm -f /etc/hostapd/hostapd.conf
@@ -183,7 +213,7 @@ dhcp-option=option:dns-server,$LAN_GW
 log-facility=/var/log/dnsmasq.log
 log-dhcp
 
-cache-size=1000
+cache-size=10000
 EOF
 
 log "Configuring iptables..."
@@ -203,6 +233,7 @@ iptables -A FORWARD -i "$AP_IFACE" -o "$WAN_IFACE" -j ACCEPT
 iptables -A FORWARD -i "$WAN_IFACE" -o "$AP_IFACE" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
 netfilter-persistent save
+systemctl enable netfilter-persistent
 
 rfkill unblock wifi
 
