@@ -23,8 +23,74 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-LAN_NET="192.168.50.0"
-LAN_CIDR="192.168.50.0/24"
+CONF_NAME_FILE="ROUTER_MODE"
+
+read -p "Do you wish to delete the configurations previously made with this script? (y/N): " AP_CLEAN
+if [[ ${AP_CLEAN^^} == "y" ]]; then
+    log "Stop and disable at boot services for the AP..."
+    systemctl disable --quiet hostapd dnsmasq netfilter-persistent || true
+    systemctl stop --quiet hostapd dnsmasq netfilter-persistent || true
+
+    log "Return control of the interface to NetworkManager..."
+    if [ -f /etc/network/interfaces.d/ROUTER_MODE.conf ]; then
+        AP_IFACE_CLEAN=$(awk '/iface/ {print $2}' /etc/network/interfaces.d/ROUTER_MODE.conf)
+        if [ -n "$AP_IFACE_CLEAN" ]; then
+            nmcli dev set "$AP_IFACE_CLEAN" managed yes 2>/dev/null || true
+            ip addr flush dev "$AP_IFACE_CLEAN" 2>/dev/null || true
+        fi
+    fi
+
+    log "Deleting conf file and restore default ones..."
+    rm -f /etc/network/interfaces.d/${CONF_NAME_FILE}
+    rm -f /etc/NetworkManager/conf.d/${CONF_NAME_FILE}.conf
+    rm -f /etc/hostapd/hostapd.conf
+    rm -f /etc/dnsmasq.d/router.conf
+    rm -f /etc/dnsmasq.conf
+    rm -f /etc/sysctl.d/99-router-ipforward.conf
+    [ -f /etc/hostapd/default_hostapd.conf ] && mv /etc/hostapd/default_hostapd.conf /etc/hostapd/hostapd.conf
+    [ -f /etc/default_dnsmasq.conf ] && mv /etc/default_dnsmasq.conf /etc/dnsmasq.conf
+    [ -f /etc/old_sysctl.conf ] && mv /etc/old_sysctl.conf /etc/sysctl.conf
+
+    log "Resetting iptables rules..."
+    iptables -F
+    iptables -t nat -F
+    iptables -t mangle -F
+
+    iptables -X
+    iptables -t nat -X
+    iptables -t mangle -X
+
+    iptables -P INPUT ACCEPT
+    iptables -P FORWARD ACCEPT
+    iptables -P OUTPUT ACCEPT
+
+    sysctl -w net.ipv4.ip_forward=0 >/dev/null
+    sysctl --system >/dev/null
+
+    netfilter-persistent save || true
+
+    log "Restarting NetworkManager..."
+    systemctl restart NetworkManager || true
+
+    read -p "Do you want to remove the packages that enable router mode (do you never want to use router mode again)? (y/N): " AP_PURGE
+    if [[ ${AP_PURGE^^} == "y" ]]; then
+        log "Deleting packages..."
+        apt-get purge -y hostapd dnsmasq netfilter-persistent
+        apt-get autoremove -y
+    fi
+
+    log "Cleaning complete"
+    warning "A restart is recommended..."
+    read -p "Would you like to restart? (y/N): " AP_RESTART
+    if [[ ${AP_RESTART^^} == "y" ]]; then
+        log "Restarting in 3 seconds..."
+        sleep 3
+        shutdown -r now
+    fi
+    
+    exit 0
+fi
+
 LAN_GW="192.168.50.1"
 LAN_DHCP_START="192.168.50.50"
 LAN_DHCP_END="192.168.50.150"
@@ -85,35 +151,35 @@ WAN_IFACE="${source_eth_interfaces[0]}"
 log "Using Wi-Fi interface: $AP_IFACE"
 log "Using WAN interface: $WAN_IFACE"
 
-AP_name=""
-while [ -z "$AP_name" ]
+AP_NAME=""
+while [ -z "$AP_NAME" ]
 do
-    read -p "Enter Access Point name (SSID): " AP_name
+    read -p "Enter Access Point name (SSID): " AP_NAME
 
-    if [ -z "$AP_name" ]; then
+    if [ -z "$AP_NAME" ]; then
         error "SSID cannot be empty"
     fi
 done
 
-AP_password=""
-while [ -z "$AP_password" ]
+AP_PASSWORD=""
+while [ -z "$AP_PASSWORD" ]
 do
-    read -s -p "Enter Access Point password (minimum 8 characters): " AP_password
+    read -s -p "Enter Access Point password (minimum 8 characters): " AP_PASSWORD
     echo
 
-    if [ -z "$AP_password" ]; then
+    if [ -z "$AP_PASSWORD" ]; then
         error "Password cannot be empty"
-    elif [ ${#AP_password} -lt 8 ]; then
+    elif [ ${#AP_PASSWORD} -lt 8 ]; then
         error "Password must be at least 8 characters long"
-        AP_password=""
+        AP_PASSWORD=""
     fi
 done
 echo
 
-read -p "Enable router functionality after reboot? (Y/N): " AP_reboot
+read -p "Enable router functionality after reboot? (y/N): " AP_reboot
 echo
 
-if [[ ${AP_reboot^^} == "Y" ]]; then
+if [[ ${AP_reboot^^} == "y" ]]; then
     log "Configuring persistent router functionality after reboot..."
     systemctl enable hostapd
     systemctl enable dnsmasq
@@ -121,7 +187,7 @@ if [[ ${AP_reboot^^} == "Y" ]]; then
     
     log "Prevent NetworkManager from managing the interface"
     mkdir -p /etc/NetworkManager/conf.d/
-    cat > /etc/NetworkManager/conf.d/unmanaged-${AP_IFACE}.conf <<EOF
+    cat > /etc/NetworkManager/conf.d/${CONF_NAME_FILE}.conf <<EOF
 [keyfile]
 unmanaged-devices=interface-name:${AP_IFACE}
 EOF
@@ -129,7 +195,7 @@ EOF
     
     log "Creating persistent network configuration..."
     mkdir -p /etc/network/interfaces.d/
-    cat > /etc/network/interfaces.d/${AP_IFACE}.conf <<EOF
+    cat > /etc/network/interfaces.d/${CONF_NAME_FILE} <<EOF
 auto ${AP_IFACE}
 iface ${AP_IFACE} inet static
     address ${LAN_GW}
@@ -150,6 +216,7 @@ ip addr add "${LAN_GW}/24" dev "$AP_IFACE"
 ip link set "$AP_IFACE" up
 
 log "Enabling IP forwarding..."
+cp /etc/sysctl.conf /etc/old_sysctl.conf
 cat > /etc/sysctl.conf <<EOF
 net.ipv4.ip_forward=1
 EOF
@@ -161,13 +228,13 @@ sysctl -w net.ipv4.ip_forward=1 >/dev/null
 sysctl --system >/dev/null
 
 log "Configuring hostapd..."
-rm -f /etc/hostapd/hostapd.conf
-mkdir -p /etc/hostapd
+mv /etc/hostapd/hostapd.conf /etc/hostapd/default_hostapd.conf
 cat > /etc/hostapd/hostapd.conf <<EOF
+# Router mode conf
 interface=$AP_IFACE
 driver=nl80211
 
-ssid=$AP_name
+ssid=$AP_NAME
 hw_mode=g
 channel=7
 
@@ -176,7 +243,7 @@ wmm_enabled=1
 
 auth_algs=1
 wpa=2
-wpa_passphrase=$AP_password
+wpa_passphrase=$AP_PASSWORD
 wpa_key_mgmt=WPA-PSK
 rsn_pairwise=CCMP
 
@@ -189,9 +256,8 @@ DAEMON_CONF="/etc/hostapd/hostapd.conf"
 EOF
 
 log "Configuring dnsmasq..."
-rm -f /etc/dnsmasq.conf /etc/dnsmasq.d/router.conf
+mv /etc/dnsmasq.conf /etc/default_dnsmasq.conf
 mkdir -p /etc/dnsmasq.d
-
 cat > /etc/dnsmasq.conf <<EOF
 conf-dir=/etc/dnsmasq.d
 EOF
@@ -276,8 +342,8 @@ trap - EXIT
 log "Router configuration completed successfully!"
 echo
 echo "================================================"
-echo "Access Point: $AP_name"
-echo "Password: $AP_password"
+echo "Access Point: $AP_NAME"
+echo "Password: $AP_PASSWORD"
 echo "Interface: $AP_IFACE"
 echo "Internet via: $WAN_IFACE"
 echo "LAN Gateway: $LAN_GW"

@@ -74,27 +74,7 @@ To change Wi‑Fi channel or other radio settings later, edit /etc/hostapd/hosta
   - journalctl -u dnsmasq -f
 - Verify your Wi‑Fi adapter supports AP mode (iw list).
 - Ensure rfkill is not blocking Wi‑Fi (the script runs rfkill unblock wifi).
-- If NetworkManager manages the AP interface, disable management or use persistent mode to make it unmanaged.
-
-## How to revert (manual cleanup)
-- If you chose non‑persistent: reboot.
-- If persistent was enabled:
-  ```bash
-  sudo systemctl disable --now hostapd dnsmasq netfilter-persistent
-  sudo rm -f /etc/hostapd/hostapd.conf /etc/default/hostapd
-  sudo rm -f /etc/dnsmasq.d/router.conf
-  # Optional: restore your original /etc/dnsmasq.conf, or purge/reinstall dnsmasq if needed
-  sudo rm -f /etc/sysctl.d/99-router-ipforward.conf
-  sudo sysctl -w net.ipv4.ip_forward=0
-  sudo rm -f /etc/NetworkManager/conf.d/unmanaged-*.conf
-  sudo systemctl reload NetworkManager || true
-  sudo rm -f /etc/network/interfaces.d/*.conf
-  sudo netfilter-persistent flush || true
-  sudo iptables -F; sudo iptables -t nat -F
-  ```
-  Reboot afterwards.
-
-  A revert script is planned for the future.    
+- If NetworkManager manages the AP interface, disable management or use persistent mode to make it unmanaged.  
 
 ## Notes
 - Use a strong Wi‑Fi password.
