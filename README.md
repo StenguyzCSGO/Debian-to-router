@@ -1,83 +1,205 @@
-# Debian-to-router
+# Debian to Router
 
-Turn an old PC or Raspberry Pi into a Wi‑Fi router and access point. This script configures hostapd (AP), dnsmasq (DHCP/DNS), and iptables (NAT) to share your wired internet over Wi‑Fi — a cheap alternative to buying a new router.
+Transform a Debian PC or Raspberry Pi into a fully functional Wi-Fi router with DHCP, DNS, and NAT capabilities.
 
-## What it does
-- Detects a Wi‑Fi adapter that supports AP mode and a connected Ethernet interface for internet (WAN).
-- Configures the Wi‑Fi interface as a LAN gateway: 192.168.50.1/24.
-- Starts a WPA2 Wi‑Fi network (your SSID and password).
-- Serves DHCP and DNS to clients via dnsmasq.
-- Enables NAT and IPv4 forwarding to share internet from WAN to Wi‑Fi.
-- Lets you choose if the router setup is temporary (this boot only) or persistent (after every reboot).
+## Features
 
-## Prerequisites
-- Debian/Ubuntu/Raspberry Pi OS with systemd.
-- Root privileges (sudo).
-- A working wired Ethernet connection with internet access.
-- A free Wi‑Fi adapter that supports AP mode (nl80211). You can check support with:
-  - iw list | grep -A5 "Supported interface modes" (look for AP)
-- NetworkManager installed (script uses nmcli to detect/manage interfaces).
+- **Automatic interface detection**: Finds Wi-Fi adapters supporting AP mode and connected Ethernet interfaces
+- **Complete router functionality**: Hostapd (access point), dnsmasq (DHCP/DNS), iptables (NAT/forwarding)
+- **Persistent or temporary mode**: Choose between one-time setup or automatic startup on boot
+- **Systemd service integration**: Single service manages all components in correct order
+- **Resource optimization**: Optional TTY-only mode to disable GUI and save resources
+- **Easy cleanup**: Remove all configurations and restore original state
 
-## Quick start
+## Requirements
+
+- Debian/Ubuntu/Raspberry Pi OS (systemd-based)
+- Root privileges
+- Ethernet connection with internet access (WAN)
+- Wi-Fi adapter supporting AP mode (nl80211 driver)
+- NetworkManager installed
+
+### Check Wi-Fi AP support
+
 ```bash
-# 1) Get the code
-git clone https://github.com/yourname/Debian-to-router.git
+iw list | grep -A 10 "Supported interface modes"
+# Look for "AP" in the output
+```
+
+## Installation
+
+```bash
+# Clone repository
+git clone https://github.com/StenguyzCSGO/Debian-to-router.git
 cd Debian-to-router
 
-# 2) Make the script executable
+# Make executable
 chmod +x router.sh
 
-# 3) Run as root
+# Run as root
 sudo ./router.sh
 ```
 
-During the run you will be prompted to:
-- Enter the Wi‑Fi network name (SSID).
-- Enter a password (minimum 8 characters).
-- Choose whether to enable router mode after every reboot (persistent) or only for this session.
+## Usage
 
-Connect your devices to the new Wi‑Fi network when it’s up.
+### Interactive Setup
 
-## Defaults and customization
-Edit the variables at the top of router.sh before running if needed:
-- LAN: 192.168.50.0/24, gateway 192.168.50.1
-- DHCP range: 192.168.50.50 – 192.168.50.150
-- Upstream DNS: 1.1.1.1, 8.8.8.8 (clients are handed the router as DNS; dnsmasq forwards upstream)
-- Wi‑Fi: 2.4 GHz, channel 7, WPA2-PSK
+The script will prompt you for:
 
-To change Wi‑Fi channel or other radio settings later, edit /etc/hostapd/hostapd.conf.
+1. **Wi-Fi network name (SSID)**: Your access point name
+2. **Password**: Minimum 8 characters, WPA2-PSK encryption
+3. **Persistent mode**: Enable automatic startup on boot
+4. **TTY mode** (if persistent): Disable graphical interface to save resources
 
-## Persistence modes
-- Non‑persistent (recommended for quick tests)
-  - Changes apply for this boot only. Reboot to revert.
-- Persistent (start at every reboot)
-  - Enables and configures: hostapd, dnsmasq, netfilter-persistent
-  - Marks the AP interface unmanaged in NetworkManager
-  - Creates /etc/network/interfaces.d/<iface>.conf for static IP
-  - Enables IPv4 forwarding via sysctl
+### Post-Installation
 
-## Files and services this script touches
-- Services: hostapd, dnsmasq, netfilter-persistent
-- Config:
-  - /etc/hostapd/hostapd.conf
-  - /etc/default/hostapd
-  - /etc/dnsmasq.conf and /etc/dnsmasq.d/router.conf
-  - /etc/sysctl.d/99-router-ipforward.conf (IPv4 forwarding)
-  - /etc/NetworkManager/conf.d/unmanaged-<iface>.conf (if persistent)
-  - /etc/network/interfaces.d/<iface>.conf (if persistent)
-- Firewall/NAT: iptables rules saved via netfilter-persistent
+After successful setup, the script is installed as:
+
+```bash
+sudo router-mode
+```
+
+Monitor services:
+
+```bash
+systemctl status router-mode.service
+systemctl status hostapd dnsmasq
+journalctl -u router-mode -f
+```
+
+### Remove Configuration
+
+```bash
+sudo router-mode
+# Answer 'y' to cleanup prompt
+```
+
+This removes all configurations, restores NetworkManager control, resets iptables, and re-enables GUI if disabled.
+
+## Default Configuration
+
+| Setting | Value |
+|---------|-------|
+| LAN Gateway | 192.168.50.1 |
+| LAN Subnet | 192.168.50.0/24 |
+| DHCP Range | 192.168.50.50 - 192.168.50.150 |
+| DNS Servers | 1.1.1.1, 8.8.8.8 |
+| Wi-Fi Channel | 7 (2.4 GHz) |
+| Encryption | WPA2-PSK |
+
+## How It Works
+
+### Persistent Mode (Systemd Service)
+
+1. Script copies itself to `/usr/local/sbin/router-mode`
+2. Creates `router-mode.service` systemd unit
+3. Service starts after network and NetworkManager
+4. Configuration saved to `/etc/router-mode/config`
+5. On boot: loads config, detects interfaces, starts hostapd/dnsmasq
+
+### Network Configuration
+
+- Wi-Fi interface configured with static IP (192.168.50.1/24)
+- NetworkManager releases control of Wi-Fi interface
+- IPv4 forwarding enabled via sysctl
+- NAT configured with iptables MASQUERADE
+- Hostapd creates WPA2 access point
+- Dnsmasq provides DHCP and DNS forwarding
+
+## File Locations
+
+```
+/usr/local/sbin/router-mode              # Installed script
+/etc/router-mode/config                  # Saved configuration
+/etc/systemd/system/router-mode.service  # Systemd service
+/etc/hostapd/hostapd.conf                # Access point config
+/etc/dnsmasq.d/router.conf               # DHCP/DNS config
+/etc/NetworkManager/conf.d/ROUTER_MODE.conf
+/etc/network/interfaces.d/ROUTER_MODE.conf
+/etc/sysctl.d/99-router-ipforward.conf
+```
+
+## TTY Mode (Console Only)
+
+When enabled, the system boots to text console (TTY) instead of graphical interface:
+
+**Switch between TTY consoles:**
+- `Ctrl+Alt+F1` to `F6`: Access TTY1-6
+- `Alt+F1` to `F6`: Switch TTY (when already in console)
+
+**Temporarily start GUI:**
+```bash
+sudo systemctl start gdm3  # or lightdm/sddm
+```
+
+**Permanently re-enable GUI:**
+```bash
+sudo systemctl set-default graphical.target
+sudo reboot
+```
 
 ## Troubleshooting
-- Check service status and logs:
-  - systemctl status hostapd dnsmasq
-  - journalctl -u hostapd -f
-  - journalctl -u dnsmasq -f
-- Verify your Wi‑Fi adapter supports AP mode (iw list).
-- Ensure rfkill is not blocking Wi‑Fi (the script runs rfkill unblock wifi).
-- If NetworkManager manages the AP interface, disable management or use persistent mode to make it unmanaged.  
 
-## Notes
-- Use a strong Wi‑Fi password.
-- Variables of the AP aren't asked to the user to prevent errors (But you can change them if you are experimented).
-- Regulatory domain and optimal channel selection are not auto‑tuned; adjust hostapd.conf for your country/channel as needed.
-- This script assumes NetworkManager is present; on minimal servers without it, detection may fail.
+**Service won't start:**
+```bash
+journalctl -u router-mode -n 50
+systemctl status hostapd --no-pager
+```
+
+**Wi-Fi adapter not detected:**
+```bash
+iw list  # Check AP mode support
+nmcli device  # Verify interface detection
+```
+
+**No internet on connected devices:**
+```bash
+# Check NAT rules
+sudo iptables -t nat -L -n -v
+
+# Check IP forwarding
+cat /proc/sys/net/ipv4/ip_forward  # Should be 1
+
+# Verify WAN interface has internet
+ping -I eth0 8.8.8.8
+```
+
+**Interface blocked:**
+```bash
+rfkill list
+rfkill unblock wifi
+```
+
+## Security Notes
+
+- Use strong WPA2 passwords (minimum 8 characters)
+- Configuration file `/etc/router-mode/config` is chmod 600 (root only)
+- Consider firewall rules for production deployments
+- Default configuration accepts all forwarded traffic (adjust iptables for restrictions)
+
+## Advanced Configuration
+
+Edit `/etc/hostapd/hostapd.conf` for:
+- Channel selection (`channel=7`)
+- Wi-Fi band (`hw_mode=g` for 2.4GHz, `hw_mode=a` for 5GHz)
+- Country code (`country_code=US`)
+- Hidden SSID (`ignore_broadcast_ssid=1`)
+
+Edit `/etc/dnsmasq.d/router.conf` for:
+- DHCP lease time (`12h`)
+- DNS servers (`server=1.1.1.1`)
+- Static IP assignments
+- Custom domain name
+
+Restart services after changes:
+```bash
+sudo systemctl restart router-mode.service
+```
+
+## License
+
+MIT License - See LICENSE file for details
+
+## Contributing
+
+Pull requests welcome. For major changes, please open an issue first.
