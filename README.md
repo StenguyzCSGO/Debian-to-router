@@ -50,11 +50,12 @@ To change Wi‑Fi channel or other radio settings later, edit /etc/hostapd/hosta
 ## Persistence modes
 - Non‑persistent (recommended for quick tests)
   - Changes apply for this boot only. Reboot to revert.
-- Persistent (start at every reboot)
+- Persistent (start at every reboot) **NOT WORKING**
   - Enables and configures: hostapd, dnsmasq, netfilter-persistent
   - Marks the AP interface unmanaged in NetworkManager
   - Creates /etc/network/interfaces.d/<iface>.conf for static IP
   - Enables IPv4 forwarding via sysctl
+  - **NOT WORKING**: Because the services start when the interface isn't ready.
 
 ## Files and services this script touches
 - Services: hostapd, dnsmasq, netfilter-persistent

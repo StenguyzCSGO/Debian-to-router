@@ -216,7 +216,7 @@ ip addr add "${LAN_GW}/24" dev "$AP_IFACE"
 ip link set "$AP_IFACE" up
 
 log "Enabling IP forwarding..."
-cp /etc/sysctl.conf /etc/old_sysctl.conf
+[ -f /etc/sysctl.conf ] && mv /etc/sysctl.conf /etc/old_sysctl.conf
 cat > /etc/sysctl.conf <<EOF
 net.ipv4.ip_forward=1
 EOF
@@ -228,7 +228,7 @@ sysctl -w net.ipv4.ip_forward=1 >/dev/null
 sysctl --system >/dev/null
 
 log "Configuring hostapd..."
-mv /etc/hostapd/hostapd.conf /etc/hostapd/default_hostapd.conf
+[ -f /etc/hostapd/hostapd.conf ] && mv /etc/hostapd/hostapd.conf /etc/hostapd/default_hostapd.conf
 cat > /etc/hostapd/hostapd.conf <<EOF
 # Router mode conf
 interface=$AP_IFACE
@@ -301,7 +301,7 @@ iptables -A FORWARD -i "$WAN_IFACE" -o "$AP_IFACE" -m conntrack --ctstate ESTABL
 netfilter-persistent save
 systemctl enable netfilter-persistent
 
-rfkill unblock wifi
+rfkill unblock wifi || true
 
 log "Starting services..."
 if systemctl restart dnsmasq; then
